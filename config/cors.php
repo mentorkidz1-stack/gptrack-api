@@ -19,7 +19,13 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*'],
+    // '*' en local (aucune variable définie) ; restreint au(x) domaine(s)
+    // réel(s) du dashboard en production via FRONTEND_URL (liste séparée
+    // par des virgules si plusieurs domaines).
+    'allowed_origins' => array_filter(array_map(
+        'trim',
+        explode(',', env('FRONTEND_URL', '*'))
+    )),
 
     'allowed_origins_patterns' => [],
 
