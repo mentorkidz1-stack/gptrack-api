@@ -365,9 +365,14 @@ class AuthController extends Controller
             'message'=>$sent ? 'OTP envoyé par SMS' : 'OTP généré',
 
 
-            // Uniquement en dev / si le SMS n'a pas pu être envoyé :
-            // jamais exposer le code en production quand le SMS est parti.
-            'otp'=>(config('app.debug') && !$sent) ? $otp : null
+            // Tant qu'aucun SMS n'a réellement pu être envoyé (Twilio non
+            // configuré, ou échec d'envoi), le code est renvoyé dans la
+            // réponse pour que l'app puisse l'afficher à l'écran — c'est
+            // le seul moyen de se connecter tant que Twilio n'est pas
+            // activé. Volontairement indépendant de APP_DEBUG : dès que
+            // Twilio enverra vraiment le SMS ($sent = true), le code ne
+            // sera plus jamais exposé, quel que soit le mode de l'app.
+            'otp'=>$sent ? null : $otp
 
 
 
