@@ -46,6 +46,14 @@ class CurriculumController extends Controller
      */
     public function importConfirm(Request $request)
     {
+        // Validation volontairement peu profonde sur le contenu de chaque
+        // semaine : le parseur PDF (best-effort sur un document irrégulier)
+        // produit parfois une date invalide sur une poignée de semaines.
+        // Avec une règle Laravel imbriquée classique, UNE SEULE semaine
+        // invalide aurait rejeté tout l'import — y compris les autres
+        // promotions parfaitement valides. Chaque semaine est donc
+        // vérifiée individuellement plus bas et simplement ignorée (pas
+        // tout l'import bloqué) si elle est corrompue.
         $request->validate([
             'subject_id' => 'nullable|integer',
             'subject_name' => 'nullable|string|max:255',
@@ -53,13 +61,6 @@ class CurriculumController extends Controller
             'mappings.*.class_level_id' => 'nullable|integer',
             'mappings.*.promotion' => 'required_without:mappings.*.class_level_id|nullable|string|max:255',
             'mappings.*.weeks' => 'required|array',
-            'mappings.*.weeks.*.trimester' => 'required|integer|min:1|max:3',
-            'mappings.*.weeks.*.period_start' => 'required|date',
-            'mappings.*.weeks.*.period_end' => 'required|date',
-            'mappings.*.weeks.*.situation_apprentissage' => 'nullable|string',
-            'mappings.*.weeks.*.activities_text' => 'nullable|string',
-            'mappings.*.weeks.*.taux_prevu' => 'required|numeric|min:0|max:100',
-            'mappings.*.weeks.*.is_teaching_week' => 'required|boolean',
         ]);
 
         // La matière : celle choisie explicitement, ou créée à la volée à
@@ -106,31 +107,83 @@ class CurriculumController extends Controller
         }
 
         $created = 0;
+        $skipped = 0;
 
-        DB::transaction(function () use ($request, $subject, $classLevelIds, &$created) {
+        DB::transaction(function () use ($request, $subject, $classLevelIds, &$created, &$skipped) {
             foreach ($request->mappings as $i => $mapping) {
                 foreach ($mapping['weeks'] as $week) {
+                    if (!$this->isValidWeek($week)) {
+                        $skipped++;
+                        continue;
+                    }
+
                     CurriculumWeek::create([
                         'subject_id' => $subject->id,
                         'class_level_id' => $classLevelIds[$i],
-                        'trimester' => $week['trimester'],
+                        'trimester' => (int) $week['trimester'],
                         'period_start' => $week['period_start'],
                         'period_end' => $week['period_end'],
                         'situation_apprentissage' => $week['situation_apprentissage'] ?? null,
                         'activities_text' => $week['activities_text'] ?? null,
                         'taux_prevu' => $week['taux_prevu'],
-                        'is_teaching_week' => $week['is_teaching_week'],
+                        'is_teaching_week' => (bool) $week['is_teaching_week'],
                     ]);
                     $created++;
                 }
             }
         });
 
+        $message = "$created semaines importées";
+        if ($skipped > 0) {
+            $message .= " ($skipped semaine(s) ignorée(s) car mal extraite(s) du PDF — à ajouter manuellement si besoin)";
+        }
+
         return response()->json([
             'success' => true,
-            'message' => "$created semaines importées",
+            'message' => $message,
             'weeks_created' => $created,
+            'weeks_skipped' => $skipped,
         ]);
+    }
+
+    /**
+     * Une semaine du mapping envoyé par le dashboard est valide si ses
+     * champs essentiels sont exploitables — sinon elle est ignorée plutôt
+     * que de faire échouer tout l'import (voir importConfirm()).
+     */
+    private function isValidWeek(array $week): bool
+    {
+        if (!isset($week['trimester']) || !in_array((int) $week['trimester'], [1, 2, 3], true)) {
+            return false;
+        }
+
+        if (!isset($week['period_start'], $week['period_end'])) {
+            return false;
+        }
+
+        try {
+            $start = \Carbon\Carbon::parse($week['period_start']);
+            $end = \Carbon\Carbon::parse($week['period_end']);
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        // Une date "invalide" comme "2026-05-00" ne lève pas toujours une
+        // exception chez Carbon (elle est parfois recalée sur le mois
+        // précédent) — on rejette aussi une plage clairement incohérente.
+        if ($end->lt($start) || $start->diffInDays($end) > 31) {
+            return false;
+        }
+
+        if (!isset($week['taux_prevu']) || !is_numeric($week['taux_prevu'])) {
+            return false;
+        }
+
+        if (!array_key_exists('is_teaching_week', $week)) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
