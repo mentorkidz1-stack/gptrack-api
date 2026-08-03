@@ -74,6 +74,9 @@ class SiteController extends Controller
         $site = Site::findOrFail($id);
 
         $request->validate([
+            'name' => 'nullable|string|max:255',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
             'work_start_time' => 'nullable',
             'work_end_time' => 'nullable',
             'late_tolerance_minutes' => 'nullable|integer',
@@ -87,7 +90,13 @@ class SiteController extends Controller
         // Liste blanche explicite : jamais `$request->all()`, pour ne pas
         // permettre au client de réassigner `company_id` ou d'autres
         // champs protégés via une requête bien formée.
+        // (latitude/longitude étaient absents ici : le dashboard permettait
+        // de "modifier la position", affichait un succès, mais la position
+        // stockée ne changeait jamais réellement.)
         $site->update($request->only([
+            'name',
+            'latitude',
+            'longitude',
             'work_start_time',
             'work_end_time',
             'late_tolerance_minutes',
