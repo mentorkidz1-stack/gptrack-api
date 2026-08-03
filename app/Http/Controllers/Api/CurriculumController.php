@@ -47,9 +47,11 @@ class CurriculumController extends Controller
     public function importConfirm(Request $request)
     {
         $request->validate([
-            'subject_id' => 'required|integer',
+            'subject_id' => 'nullable|integer',
+            'subject_name' => 'nullable|string|max:255',
             'mappings' => 'required|array|min:1',
-            'mappings.*.class_level_id' => 'required|integer',
+            'mappings.*.class_level_id' => 'nullable|integer',
+            'mappings.*.promotion' => 'required_without:mappings.*.class_level_id|nullable|string|max:255',
             'mappings.*.weeks' => 'required|array',
             'mappings.*.weeks.*.trimester' => 'required|integer|min:1|max:3',
             'mappings.*.weeks.*.period_start' => 'required|date',
@@ -60,31 +62,57 @@ class CurriculumController extends Controller
             'mappings.*.weeks.*.is_teaching_week' => 'required|boolean',
         ]);
 
-        $subject = Subject::find($request->subject_id);
-        if (!$subject) {
+        // La matière : celle choisie explicitement, ou créée à la volée à
+        // partir de la discipline détectée dans le PDF si elle n'existe
+        // pas encore — évite d'obliger le DG à tout pré-créer à la main.
+        if ($request->filled('subject_id')) {
+            $subject = Subject::find($request->subject_id);
+            if (!$subject) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Matière invalide',
+                ], 422);
+            }
+        } elseif ($request->filled('subject_name')) {
+            $subject = Subject::firstOrCreate([
+                'name' => trim($request->subject_name),
+            ]);
+        } else {
             return response()->json([
                 'success' => false,
-                'message' => 'Matière invalide',
+                'message' => 'Matière requise (subject_id ou subject_name)',
             ], 422);
         }
 
-        foreach ($request->mappings as $mapping) {
-            if (!ClassLevel::find($mapping['class_level_id'])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Classe invalide dans le mapping',
-                ], 422);
+        // Chaque classe : celle choisie explicitement dans le mapping, ou
+        // trouvée/créée automatiquement à partir du nom de la promotion
+        // détectée dans le PDF (comparaison insensible à la casse).
+        $classLevelIds = [];
+        foreach ($request->mappings as $i => $mapping) {
+            if (!empty($mapping['class_level_id'])) {
+                $classLevel = ClassLevel::find($mapping['class_level_id']);
+                if (!$classLevel) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Classe invalide dans le mapping',
+                    ], 422);
+                }
+            } else {
+                $name = trim($mapping['promotion']);
+                $classLevel = ClassLevel::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])->first()
+                    ?? ClassLevel::create(['name' => $name]);
             }
+            $classLevelIds[$i] = $classLevel->id;
         }
 
         $created = 0;
 
-        DB::transaction(function () use ($request, $subject, &$created) {
-            foreach ($request->mappings as $mapping) {
+        DB::transaction(function () use ($request, $subject, $classLevelIds, &$created) {
+            foreach ($request->mappings as $i => $mapping) {
                 foreach ($mapping['weeks'] as $week) {
                     CurriculumWeek::create([
                         'subject_id' => $subject->id,
-                        'class_level_id' => $mapping['class_level_id'],
+                        'class_level_id' => $classLevelIds[$i],
                         'trimester' => $week['trimester'],
                         'period_start' => $week['period_start'],
                         'period_end' => $week['period_end'],
