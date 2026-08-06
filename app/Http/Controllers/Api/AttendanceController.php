@@ -531,7 +531,17 @@ class AttendanceController extends Controller
 
                 'success'=>true,
 
-                'inside_zone'=>false
+                'inside_zone'=>false,
+
+                // Le téléphone mémorise ces coordonnées pour pouvoir
+                // recalculer localement la zone quand il n'a plus de
+                // réseau — la validation officielle du pointage reste
+                // toujours faite ici, côté serveur, au moment du sync.
+                'site'=>[
+                    'latitude'=>$site->latitude,
+                    'longitude'=>$site->longitude,
+                    'radius'=>$site->radius,
+                ],
 
 
             ]);
@@ -585,7 +595,13 @@ class AttendanceController extends Controller
 
                 'inside_zone'=>true,
 
-                'message'=>'Présence déjà enregistrée'
+                'message'=>'Présence déjà enregistrée',
+
+                'site'=>[
+                    'latitude'=>$site->latitude,
+                    'longitude'=>$site->longitude,
+                    'radius'=>$site->radius,
+                ],
 
 
             ]);
@@ -616,7 +632,13 @@ class AttendanceController extends Controller
                 "message"=>"Veuillez marquer votre présence avant de commencer votre journée."
 
 
-            ]
+            ],
+
+            'site'=>[
+                'latitude'=>$site->latitude,
+                'longitude'=>$site->longitude,
+                'radius'=>$site->radius,
+            ],
 
 
         ]);
