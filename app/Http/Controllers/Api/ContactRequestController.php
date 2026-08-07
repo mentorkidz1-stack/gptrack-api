@@ -9,6 +9,45 @@ use Illuminate\Http\Request;
 class ContactRequestController extends Controller
 {
     /**
+     * Liste des demandes de contact — réservée au compte opérateur GPTrack
+     * (DFEM SOLUTIONS), pas à n'importe quel DG client. La vérification se
+     * fait sur l'ID de l'entreprise, pas seulement sur le rôle "dg" :
+     * un DG d'une entreprise cliente a aussi le rôle "dg", mais ne doit
+     * jamais voir les prospects des autres.
+     */
+    public function index(Request $request)
+    {
+        $operatorCompanyId = config('services.operator_company_id');
+        if (!$operatorCompanyId || (string) $request->user()->company_id !== (string) $operatorCompanyId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Accès refusé',
+            ], 403);
+        }
+
+        return response()->json([
+            'success' => true,
+            'requests' => ContactRequest::orderByDesc('created_at')->get(),
+        ]);
+    }
+
+    public function markHandled(Request $request, $id)
+    {
+        $operatorCompanyId = config('services.operator_company_id');
+        if (!$operatorCompanyId || (string) $request->user()->company_id !== (string) $operatorCompanyId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Accès refusé',
+            ], 403);
+        }
+
+        $contact = ContactRequest::findOrFail($id);
+        $contact->update(['handled' => true]);
+
+        return response()->json(['success' => true, 'request' => $contact]);
+    }
+
+    /**
      * Formulaire de contact public (site vitrine) — aucune authentification
      * requise, throttle pour éviter le spam. Ne crée aucun compte : un
      * suivi commercial recontacte ensuite manuellement.

@@ -160,7 +160,10 @@ Route::post('/attendance/today-status', [AttendanceController::class, 'todayStat
 
             'user'=>$user,
 
-            'company_type'=>$user->company?->type ?? 'entreprise'
+            'company_type'=>$user->company?->type ?? 'entreprise',
+
+            'is_operator'=>config('services.operator_company_id')
+                && (string) $user->company_id === (string) config('services.operator_company_id'),
 
         ]);
 
@@ -189,6 +192,9 @@ Route::post('/attendance/today-status', [AttendanceController::class, 'todayStat
             '/users/create-rh',
             [UserController::class,'createRh']
         );
+
+        Route::get('/contact-requests', [\App\Http\Controllers\Api\ContactRequestController::class, 'index']);
+        Route::put('/contact-requests/{id}/handled', [\App\Http\Controllers\Api\ContactRequestController::class, 'markHandled']);
 
 
     });

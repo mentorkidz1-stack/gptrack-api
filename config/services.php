@@ -56,4 +56,9 @@ return [
         'api_key' => env('ANTHROPIC_API_KEY'),
     ],
 
+    // Entreprise interne GPTrack (DFEM SOLUTIONS) — seule autorisée à
+    // consulter les demandes de contact du site vitrine, distincte de
+    // n'importe quelle entreprise cliente ayant aussi un compte "dg".
+    'operator_company_id' => env('OPERATOR_COMPANY_ID'),
+
 ];
