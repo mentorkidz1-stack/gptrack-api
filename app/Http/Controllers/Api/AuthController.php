@@ -119,7 +119,11 @@ class AuthController extends Controller
                 'company_id'=>$user->company_id ?? null,
 
 
-                'company_type'=>$user->company?->type ?? 'entreprise'
+                'company_type'=>$user->company?->type ?? 'entreprise',
+
+
+                'is_operator'=>config('services.operator_company_id')
+                    && (string) $user->company_id === (string) config('services.operator_company_id'),
 
 
             ],
