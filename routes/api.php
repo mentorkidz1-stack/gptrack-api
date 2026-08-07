@@ -94,6 +94,20 @@ Route::middleware('throttle:6,1')->post(
 
 /*
 |--------------------------------------------------------------------------
+| FORMULAIRE DE CONTACT (SITE VITRINE)
+|--------------------------------------------------------------------------
+*/
+
+
+Route::middleware('throttle:6,1')->post(
+    '/contact-requests',
+    [\App\Http\Controllers\Api\ContactRequestController::class,'store']
+);
+
+
+
+/*
+|--------------------------------------------------------------------------
 | WEBHOOK FACTURATION (FedaPay)
 | Route publique : authenticité garantie par la signature, pas par Sanctum.
 |--------------------------------------------------------------------------
