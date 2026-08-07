@@ -224,6 +224,13 @@ Route::post('/attendance/today-status', [AttendanceController::class, 'todayStat
         );
 
 
+
+        Route::get(
+            '/dashboard/live-status',
+            [DashboardController::class,'liveStatus']
+        );
+
+
     });
 
 

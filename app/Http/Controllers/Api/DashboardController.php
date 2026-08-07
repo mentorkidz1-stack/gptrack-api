@@ -165,7 +165,88 @@ public function lateEmployees()
         'late_employees' => $lateEmployees
     ]);
 }
-public function absentEmployees()
+    /**
+     * Vue "en direct" du jour pour le DG/RH : statut de chaque employé
+     * (arrivé à l'heure / en retard / pas encore pointé / hors créneau),
+     * un résumé chiffré, et les employés en retard répété sur les 30
+     * derniers jours — trois besoins réunis en un seul appel pour
+     * alimenter la nouvelle page "Aujourd'hui" du dashboard.
+     */
+    public function liveStatus()
+    {
+        $today = Carbon::today();
+        $now = Carbon::now();
+
+        $employees = Employee::with('site')->get();
+
+        $statuses = $employees->map(function (Employee $employee) use ($today, $now) {
+            $site = $employee->site;
+
+            $arrival = Attendance::where('employee_id', $employee->id)
+                ->where('attendance_type', 'arrival')
+                ->where('status', 'success')
+                ->whereDate('check_time', $today)
+                ->first();
+
+            $expectedStart = $site && $site->work_start_time
+                ? Carbon::parse($site->work_start_time)
+                : null;
+
+            if ($arrival) {
+                $status = $arrival->is_late ? 'late' : 'on_time';
+            } elseif ($expectedStart && $now->lt($expectedStart)) {
+                $status = 'pending';
+            } elseif ($expectedStart) {
+                $status = 'absent';
+            } else {
+                $status = 'no_schedule';
+            }
+
+            return [
+                'employee_id' => $employee->id,
+                'employee' => $employee->full_name,
+                'site' => $site?->name,
+                'status' => $status,
+                'arrival_time' => $arrival
+                    ? Carbon::parse($arrival->check_time)->format('H:i')
+                    : null,
+            ];
+        })->values();
+
+        $summary = [
+            'total' => $statuses->count(),
+            'on_time' => $statuses->where('status', 'on_time')->count(),
+            'late' => $statuses->where('status', 'late')->count(),
+            'absent' => $statuses->where('status', 'absent')->count(),
+            'pending' => $statuses->where('status', 'pending')->count(),
+        ];
+
+        // Retards répétés sur les 30 derniers jours (seuil : 3 retards ou
+        // plus) — signalés ici plutôt que par email/SMS, faute de service
+        // d'envoi configuré pour l'instant côté entreprise.
+        $repeatOffenders = Attendance::selectRaw('employee_id, count(*) as late_count')
+            ->where('attendance_type', 'arrival')
+            ->where('is_late', true)
+            ->whereDate('check_time', '>=', $today->copy()->subDays(30))
+            ->groupBy('employee_id')
+            ->having('late_count', '>=', 3)
+            ->with('employee')
+            ->orderByDesc('late_count')
+            ->get()
+            ->map(fn ($row) => [
+                'employee' => $row->employee?->full_name ?? 'Employé supprimé',
+                'late_count' => (int) $row->late_count,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'summary' => $summary,
+            'employees' => $statuses,
+            'repeat_offenders' => $repeatOffenders,
+        ]);
+    }
+
+    public function absentEmployees()
 {
     $employees = Employee::with('site')
         ->get()
