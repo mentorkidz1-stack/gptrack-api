@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\Attendance;
+use App\Models\Leave;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
@@ -25,7 +26,7 @@ class ReportController extends Controller
             'date_to' => 'nullable|date',
             'site_id' => 'nullable|integer',
             'employee_id' => 'nullable|integer',
-            'status' => 'nullable|in:present,absent,late',
+            'status' => 'nullable|in:present,absent,late,leave',
         ]);
 
         $dateFrom = $request->filled('date_from')
@@ -61,6 +62,14 @@ class ReportController extends Controller
             ->get()
             ->groupBy(fn ($a) => $a->employee_id . '_' . $a->check_time->format('Y-m-d'));
 
+        // Congés couvrant la période, regroupés par employé pour un test
+        // rapide "en congé ce jour-là ?" sans requête par jour.
+        $leaves = Leave::whereIn('employee_id', $employees->pluck('id'))
+            ->whereDate('start_date', '<=', $dateTo)
+            ->whereDate('end_date', '>=', $dateFrom)
+            ->get()
+            ->groupBy('employee_id');
+
         $rows = collect();
         for ($date = $dateFrom->copy(); $date->lte($dateTo); $date->addDay()) {
             $dateKey = $date->format('Y-m-d');
@@ -70,7 +79,16 @@ class ReportController extends Controller
                 $arrival = $dayAttendances->where('attendance_type', 'arrival')->last();
                 $departure = $dayAttendances->where('attendance_type', 'departure')->last();
 
-                $status = ($arrival && $arrival->status === 'success') ? 'present' : 'absent';
+                $onLeave = $leaves->get($employee->id, collect())
+                    ->contains(fn (Leave $leave) => $date->between($leave->start_date, $leave->end_date));
+
+                if ($arrival && $arrival->status === 'success') {
+                    $status = 'present';
+                } elseif ($onLeave) {
+                    $status = 'leave';
+                } else {
+                    $status = 'absent';
+                }
                 $late = (bool) ($arrival->is_late ?? false);
 
                 $rows->push([
@@ -102,6 +120,7 @@ class ReportController extends Controller
                 'total_rows' => $rows->count(),
                 'present' => $rows->where('status', 'present')->count(),
                 'absent' => $rows->where('status', 'absent')->count(),
+                'leave' => $rows->where('status', 'leave')->count(),
                 'late' => $rows->where('late', true)->count(),
             ],
             'employees' => $rows,

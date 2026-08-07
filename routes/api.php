@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\SubjectController;
 use App\Http\Controllers\Api\ClassLevelController;
 use App\Http\Controllers\Api\ScheduleController;
 use App\Http\Controllers\Api\CurriculumController;
+use App\Http\Controllers\Api\LeaveController;
 
 
 
@@ -413,6 +414,11 @@ Route::post('/attendance/today-status', [AttendanceController::class, 'todayStat
             [ReportController::class,'attendance']
         );
 
+
+
+        Route::get('/leaves', [LeaveController::class, 'index']);
+        Route::post('/leaves', [LeaveController::class, 'store']);
+        Route::delete('/leaves/{id}', [LeaveController::class, 'destroy']);
 
 
     });

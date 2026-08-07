@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\Attendance;
+use App\Models\Leave;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
@@ -179,7 +180,15 @@ public function lateEmployees()
 
         $employees = Employee::with('site')->get();
 
-        $statuses = $employees->map(function (Employee $employee) use ($today, $now) {
+        // Employés en congé aujourd'hui : une absence déclarée à l'avance
+        // ne doit jamais ressortir comme "absent" ou "pas encore arrivé".
+        $onLeaveToday = Leave::whereIn('employee_id', $employees->pluck('id'))
+            ->whereDate('start_date', '<=', $today)
+            ->whereDate('end_date', '>=', $today)
+            ->pluck('employee_id')
+            ->flip();
+
+        $statuses = $employees->map(function (Employee $employee) use ($today, $now, $onLeaveToday) {
             $site = $employee->site;
 
             $arrival = Attendance::where('employee_id', $employee->id)
@@ -194,6 +203,8 @@ public function lateEmployees()
 
             if ($arrival) {
                 $status = $arrival->is_late ? 'late' : 'on_time';
+            } elseif ($onLeaveToday->has($employee->id)) {
+                $status = 'leave';
             } elseif ($expectedStart && $now->lt($expectedStart)) {
                 $status = 'pending';
             } elseif ($expectedStart) {
@@ -219,6 +230,7 @@ public function lateEmployees()
             'late' => $statuses->where('status', 'late')->count(),
             'absent' => $statuses->where('status', 'absent')->count(),
             'pending' => $statuses->where('status', 'pending')->count(),
+            'leave' => $statuses->where('status', 'leave')->count(),
         ];
 
         // Retards répétés sur les 30 derniers jours (seuil : 3 retards ou
