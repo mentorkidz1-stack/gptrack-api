@@ -52,4 +52,9 @@ class CurriculumWeek extends Model
     {
         return $this->hasMany(Attendance::class);
     }
+
+    public function notions()
+    {
+        return $this->hasMany(CurriculumNotion::class)->orderBy('order');
+    }
 }

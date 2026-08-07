@@ -31,6 +31,12 @@ class CurriculumImportService
         'PRODUCTION SCOLAIRE', 'PRE-RENTREE', 'PRÉ-RENTRÉE', 'PRE-RENTRÉE',
     ];
 
+    // "Activité n°1 :", "Activitén°7 :" (sans espace), "Sous-activité
+    // n°4.1 :", "Sous –activité 4.9 :" (tiret cadratin, sans "n°") — les
+    // documents réels mélangent ces variantes, d'où la tolérance large.
+    private const NOTION_PATTERN =
+        '/^(Sous[\s\-–]*activit[ée]s?|Activit[ée]s?)\s*n?°?\s*(\d+(?:\.\d+)?)\s*:?\s*(.*)$/ui';
+
     /**
      * @return array{discipline: ?string, annee_debut: int, promotions: array<int, array{promotion: string, weeks: array}>}
      */
@@ -222,6 +228,7 @@ class CurriculumImportService
                     'period_end' => sprintf('%04d-%02d-%02d', $year, $month, (int) $m[3]),
                     'situation_apprentissage' => null,
                     'activities_text' => trim($m[4]),
+                    'notions' => [],
                     'taux_prevu' => 0,
                     'is_teaching_week' => false,
                 ];
@@ -233,6 +240,24 @@ class CurriculumImportService
         }
 
         return $weeks;
+    }
+
+    /**
+     * Reconnaît une ligne "Activité n°X : ..." ou "Sous-activité n°X.Y :
+     * ..." — chacune devient une notion individuelle, sélectionnable par
+     * l'enseignant, plutôt qu'un simple bloc de texte pour toute la
+     * semaine.
+     */
+    private function matchNotion(string $text): ?array
+    {
+        $text = trim($text);
+        if ($text === '' || !preg_match(self::NOTION_PATTERN, $text, $m)) {
+            return null;
+        }
+
+        $kind = str_starts_with(mb_strtolower(trim($m[1])), 'sous') ? 'Sous-activité' : 'Activité';
+
+        return ['label' => $kind . ' n°' . $m[2], 'text' => trim($m[3])];
     }
 
     private function looksLikeHoliday(string $text): bool
@@ -290,10 +315,23 @@ class CurriculumImportService
             return null;
         }
 
-        // SA + texte d'activités, jusqu'au couple de taux.
+        // SA + activités/sous-activités numérotées, jusqu'au couple de
+        // taux. Chaque "Activité n°X" / "Sous-activité n°X.Y" devient une
+        // notion individuelle (avec son texte, qui continue parfois sur
+        // plusieurs lignes) ; le texte hors numérotation part en repli
+        // dans $textParts, au cas où une semaine ne suit pas ce format.
         $situation = null;
         $textParts = [];
+        $notions = [];
+        $currentNotion = null;
         $tauxPrevu = null;
+
+        $pushCurrentNotion = function () use (&$currentNotion, &$notions) {
+            if ($currentNotion !== null && trim($currentNotion['text']) !== '') {
+                $notions[] = $currentNotion;
+            }
+            $currentNotion = null;
+        };
 
         while ($i < $n) {
             $line = $lines[$i];
@@ -312,9 +350,22 @@ class CurriculumImportService
 
             if (preg_match('/^SA\s*(\d+)\b\s*(.*)$/ui', $line, $m)) {
                 $situation = 'SA ' . $m[1];
-                if (trim($m[2]) !== '') {
-                    $textParts[] = trim($m[2]);
+                $rest = trim($m[2]);
+                $i++;
+                if ($rest !== '') {
+                    if ($notionMatch = $this->matchNotion($rest)) {
+                        $pushCurrentNotion();
+                        $currentNotion = $notionMatch;
+                    } else {
+                        $textParts[] = $rest;
+                    }
                 }
+                continue;
+            }
+
+            // En-tête de regroupement ("PARTIE A" / "PARTIE B") — ignoré,
+            // ce n'est pas une notion en soi.
+            if (preg_match('/^PARTIE\s+[A-Z]\s*$/ui', $line)) {
                 $i++;
                 continue;
             }
@@ -328,12 +379,30 @@ class CurriculumImportService
                 break;
             }
 
-            $textParts[] = $line;
+            if ($notionMatch = $this->matchNotion($line)) {
+                $pushCurrentNotion();
+                $currentNotion = $notionMatch;
+                $i++;
+                continue;
+            }
+
+            // Ligne de continuation : rattachée à la notion en cours si
+            // une notion est ouverte, sinon au texte générique de repli.
+            if ($currentNotion !== null) {
+                $currentNotion['text'] = trim($currentNotion['text'] . ' ' . $line);
+            } else {
+                $textParts[] = $line;
+            }
             $i++;
         }
+        $pushCurrentNotion();
 
         $year = $this->yearFor($monthStart, $anneeDebut);
         $yearEnd = $this->yearFor($monthEnd, $anneeDebut);
+
+        $activitiesText = !empty($notions)
+            ? implode("\n", array_map(fn ($n) => $n['label'] . ' : ' . $n['text'], $notions))
+            : trim(implode("\n", $textParts));
 
         return [
             'week' => [
@@ -341,7 +410,8 @@ class CurriculumImportService
                 'period_start' => sprintf('%04d-%02d-%02d', $year, $monthStart, $dayStart),
                 'period_end' => sprintf('%04d-%02d-%02d', $yearEnd, $monthEnd, $dayEnd),
                 'situation_apprentissage' => $situation,
-                'activities_text' => trim(implode("\n", $textParts)),
+                'activities_text' => $activitiesText,
+                'notions' => $notions,
                 'taux_prevu' => $tauxPrevu ?? 0,
                 'is_teaching_week' => true,
             ],

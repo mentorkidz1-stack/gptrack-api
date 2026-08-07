@@ -10,8 +10,10 @@ use App\Models\Attendance;
 use App\Models\Site;
 use App\Models\Schedule;
 use App\Models\CurriculumWeek;
+use App\Models\CurriculumNotion;
 
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 use App\Services\FirebaseService;
 use App\Services\FaceRecognitionService;
@@ -44,7 +46,12 @@ class AttendanceController extends Controller
 
             'taux_realise'=>'nullable|numeric|min:0|max:100',
 
-            'notes'=>'nullable|string'
+            'notes'=>'nullable|string',
+
+            'notion_ids'=>'nullable|array',
+            'notion_ids.*'=>'integer',
+
+            'course_started_at'=>'nullable|date',
 
         ]);
 
@@ -132,6 +139,30 @@ class AttendanceController extends Controller
                 ->whereDate('period_start', '<=', Carbon::today())
                 ->whereDate('period_end', '>=', Carbon::today())
                 ->first();
+
+            // Notions cochées par l'enseignant (n'importe quelle semaine du
+            // programme, pas seulement celle du jour) — vérifiées comme
+            // appartenant bien à cette matière+classe avant d'être
+            // acceptées, jamais faites confiance aveuglément au client.
+            $notionsToAttach = collect();
+            if ($request->filled('notion_ids')) {
+                $notionsToAttach = CurriculumNotion::with('week')
+                    ->whereIn('id', $request->notion_ids)
+                    ->whereHas('week', function ($q) use ($schedule) {
+                        $q->where('subject_id', $schedule->subject_id)
+                          ->where('class_level_id', $schedule->class_level_id);
+                    })
+                    ->get();
+
+                // La semaine de référence de l'attestation devient celle
+                // de la première notion cochée, pour rester cohérente avec
+                // ce que l'enseignant a réellement sélectionné plutôt
+                // qu'avec la seule date du jour.
+                $firstWeek = $notionsToAttach->first()?->week;
+                if ($firstWeek) {
+                    $curriculumWeek = $firstWeek;
+                }
+            }
         }
 
 
@@ -271,6 +302,37 @@ class AttendanceController extends Controller
 
 
         /*
+        Taux réalisé : calculé à partir des notions réellement cochées
+        (cumulées avec celles déjà couvertes lors d'attestations
+        précédentes pour cette même semaine), pas déclaré par
+        l'enseignant — sauf si aucune notion n'est disponible pour cette
+        semaine, auquel cas on retombe sur l'ancien comportement (valeur
+        envoyée par le client, ou taux prévu par défaut).
+        */
+
+        $tauxRealise = null;
+
+        if ($schedule && $curriculumWeek) {
+            $totalNotions = $curriculumWeek->notions()->count();
+
+            if ($totalNotions > 0 && $notionsToAttach->isNotEmpty()) {
+                $alreadyCoveredIds = DB::table('attendance_notion')
+                    ->join('curriculum_notions', 'curriculum_notions.id', '=', 'attendance_notion.curriculum_notion_id')
+                    ->where('curriculum_notions.curriculum_week_id', $curriculumWeek->id)
+                    ->pluck('attendance_notion.curriculum_notion_id');
+
+                $coveredCount = $notionsToAttach->pluck('id')
+                    ->merge($alreadyCoveredIds)
+                    ->unique()
+                    ->count();
+
+                $tauxRealise = round(($coveredCount / $totalNotions) * $curriculumWeek->taux_prevu, 2);
+            } else {
+                $tauxRealise = $request->taux_realise ?? $curriculumWeek->taux_prevu;
+            }
+        }
+
+        /*
         Création présence
         */
 
@@ -311,21 +373,26 @@ class AttendanceController extends Controller
             'check_time'=>Carbon::now(),
 
 
+            'course_started_at'=>$request->course_started_at,
+
+
             'schedule_id'=>$schedule?->id,
 
 
             'curriculum_week_id'=>$curriculumWeek?->id,
 
 
-            'taux_realise'=>$schedule
-                ? ($request->taux_realise ?? $curriculumWeek?->taux_prevu)
-                : null,
+            'taux_realise'=>$tauxRealise,
 
 
             'notes'=>$schedule ? $request->notes : null,
 
 
         ]);
+
+        if ($schedule && $notionsToAttach->isNotEmpty()) {
+            $attendance->notions()->attach($notionsToAttach->pluck('id'));
+        }
 
 
 

@@ -117,7 +117,7 @@ class CurriculumController extends Controller
                         continue;
                     }
 
-                    CurriculumWeek::create([
+                    $curriculumWeek = CurriculumWeek::create([
                         'subject_id' => $subject->id,
                         'class_level_id' => $classLevelIds[$i],
                         'trimester' => (int) $week['trimester'],
@@ -128,6 +128,29 @@ class CurriculumController extends Controller
                         'taux_prevu' => $week['taux_prevu'],
                         'is_teaching_week' => (bool) $week['is_teaching_week'],
                     ]);
+
+                    // Notions individuelles extraites du PDF ("Activité
+                    // n°X", "Sous-activité n°X.Y") — sélectionnables une
+                    // par une par l'enseignant lors de l'attestation. Si
+                    // le PDF n'en a pas produit pour cette semaine (bloc
+                    // irrégulier), on retombe sur une notion unique reprenant
+                    // tout le texte, pour ne jamais laisser une semaine sans
+                    // rien à cocher.
+                    $notions = $week['notions'] ?? [];
+                    if (empty($notions) && !empty($week['activities_text'])) {
+                        $notions = [['label' => $week['situation_apprentissage'] ?? 'Contenu', 'text' => $week['activities_text']]];
+                    }
+                    foreach ($notions as $order => $notion) {
+                        if (empty(trim($notion['text'] ?? ''))) {
+                            continue;
+                        }
+                        $curriculumWeek->notions()->create([
+                            'label' => $notion['label'] ?? ('Notion ' . ($order + 1)),
+                            'text' => $notion['text'],
+                            'order' => $order,
+                        ]);
+                    }
+
                     $created++;
                 }
             }

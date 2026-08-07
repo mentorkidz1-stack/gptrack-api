@@ -21,6 +21,7 @@ class Attendance extends Model
         'is_inside_zone',
         'status',
         'check_time',
+        'course_started_at',
         'work_minutes',
         'is_late',
         // Attestation de cours (cahier de texte) — NULL pour un pointage
@@ -39,6 +40,7 @@ class Attendance extends Model
         'face_match_score' => 'float',
         'work_minutes' => 'integer',
         'check_time' => 'datetime',
+        'course_started_at' => 'datetime',
         'taux_realise' => 'float',
     ];
 
@@ -60,5 +62,10 @@ class Attendance extends Model
     public function curriculumWeek()
     {
         return $this->belongsTo(CurriculumWeek::class);
+    }
+
+    public function notions()
+    {
+        return $this->belongsToMany(CurriculumNotion::class, 'attendance_notion');
     }
 }

@@ -11,6 +11,7 @@ use App\Models\Schedule;
 use App\Models\Subject;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ScheduleController extends Controller
 {
@@ -171,12 +172,48 @@ class ScheduleController extends Controller
                 ->whereDate('check_time', Carbon::today())
                 ->first();
 
-            $curriculumWeek = CurriculumWeek::where('subject_id', $schedule->subject_id)
+            // Notions déjà cochées au moins une fois lors d'une précédente
+            // attestation pour ce créneau — pour que l'enseignant voie ce
+            // qui a déjà été traité, quelle que soit la date exacte.
+            $coveredNotionIds = DB::table('attendance_notion')
+                ->join('attendances', 'attendances.id', '=', 'attendance_notion.attendance_id')
+                ->where('attendances.schedule_id', $schedule->id)
+                ->pluck('attendance_notion.curriculum_notion_id')
+                ->flip();
+
+            // Tout le programme de la matière/classe, pas seulement la
+            // semaine du jour : l'enseignant peut être en avance, en
+            // retard, ou vouloir rattraper une notion d'une semaine
+            // passée — on ne l'enferme pas dans la date du jour.
+            $weeks = CurriculumWeek::with('notions')
+                ->where('subject_id', $schedule->subject_id)
                 ->where('class_level_id', $schedule->class_level_id)
                 ->where('is_teaching_week', true)
-                ->whereDate('period_start', '<=', Carbon::today())
-                ->whereDate('period_end', '>=', Carbon::today())
-                ->first();
+                ->orderBy('period_start')
+                ->get();
+
+            $today = Carbon::today();
+
+            $curriculumWeeks = $weeks->map(function (CurriculumWeek $week) use ($coveredNotionIds, $today) {
+                return [
+                    'id' => $week->id,
+                    'situation_apprentissage' => $week->situation_apprentissage,
+                    'period_start' => $week->period_start->format('Y-m-d'),
+                    'period_end' => $week->period_end->format('Y-m-d'),
+                    'taux_prevu' => $week->taux_prevu,
+                    'is_current' => $today->between($week->period_start, $week->period_end),
+                    'notions' => $week->notions->map(fn ($n) => [
+                        'id' => $n->id,
+                        'label' => $n->label,
+                        'text' => $n->text,
+                        'covered' => $coveredNotionIds->has($n->id),
+                    ]),
+                ];
+            });
+
+            // Conservé pour compatibilité : la semaine correspondant à la
+            // date du jour, si elle existe.
+            $currentWeek = $weeks->first(fn (CurriculumWeek $w) => $today->between($w->period_start, $w->period_end));
 
             return [
                 'schedule_id'     => $schedule->id,
@@ -187,12 +224,13 @@ class ScheduleController extends Controller
                 'can_attest_from' => $schedule->start_time,
                 'attested'        => $attested !== null,
                 'attested_at'     => $attested ? Carbon::parse($attested->check_time)->format('H:i') : null,
-                'curriculum_week' => $curriculumWeek ? [
-                    'id'                      => $curriculumWeek->id,
-                    'situation_apprentissage' => $curriculumWeek->situation_apprentissage,
-                    'activities_text'         => $curriculumWeek->activities_text,
-                    'taux_prevu'              => $curriculumWeek->taux_prevu,
+                'curriculum_week' => $currentWeek ? [
+                    'id'                      => $currentWeek->id,
+                    'situation_apprentissage' => $currentWeek->situation_apprentissage,
+                    'activities_text'         => $currentWeek->activities_text,
+                    'taux_prevu'              => $currentWeek->taux_prevu,
                 ] : null,
+                'curriculum_weeks' => $curriculumWeeks,
             ];
         });
 
